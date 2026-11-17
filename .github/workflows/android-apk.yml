@@ -1,4 +1,3 @@
-
 name: Publish Elaf Accessories APK
 
 on:
@@ -12,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -26,16 +25,24 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Check Release Project
+        run: |
+          test -f "ElafAccessoriesAndroid_Project_Release-1.zip"
+          unzip -t "ElafAccessoriesAndroid_Project_Release-1.zip"
+
       - name: Extract Release Project
         run: |
-          unzip -o ElafAccessoriesAndroid_Project_Release.zip -d .
-          rm -f ElafAccessoriesAndroid/app/src/main/res/drawable/ic_launcher_foreground.xml
+          unzip -o "ElafAccessoriesAndroid_Project_Release-1.zip" -d .
+          test -d "ElafAccessoriesAndroid"
+          rm -f "ElafAccessoriesAndroid/app/src/main/res/drawable/ic_launcher_foreground.xml"
 
       - name: Prepare Signing Key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          test -n "$KEYSTORE_BASE64"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/elaf-release-key.jks"
+          test -s "$RUNNER_TEMP/elaf-release-key.jks"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/elaf-release-key.jks" >> "$GITHUB_ENV"
 
       - name: Build Signed Release APK
@@ -44,13 +51,18 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
           gradle --no-daemon -p ElafAccessoriesAndroid assembleRelease
+          test -s "ElafAccessoriesAndroid/app/build/outputs/apk/release/app-release.apk"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Elaf-Accessories-Release-APK
           path: ElafAccessoriesAndroid/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
 
       - name: Publish Public Download Release
         uses: softprops/action-gh-release@v2
@@ -59,5 +71,8 @@ jobs:
           name: Elaf Accessories v1.0.0
           body: |
             Official Android release of Elaf Accessories.
+
+            Download and install the application.
           files: ElafAccessoriesAndroid/app/build/outputs/apk/release/app-release.apk
           overwrite_files: true
+          make_latest: true
