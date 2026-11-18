@@ -1,3 +1,4 @@
+
 name: Publish Elaf Accessories APK
 
 on:
@@ -25,43 +26,71 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Check Release Project
+      - name: Verify Project Archive
         run: |
-          test -f "ElafAccessoriesAndroid_Project_Release-1.zip"
-          unzip -t "ElafAccessoriesAndroid_Project_Release-1.zip"
+          test -f "ElafAccessoriesAndroid_Project_Updated_Icon.zip"
+          unzip -t "ElafAccessoriesAndroid_Project_Updated_Icon.zip"
 
-      - name: Extract Release Project
+      - name: Extract Android Project
         run: |
-          unzip -o "ElafAccessoriesAndroid_Project_Release-1.zip" -d .
+          unzip -o "ElafAccessoriesAndroid_Project_Updated_Icon.zip" -d .
           test -d "ElafAccessoriesAndroid"
           rm -f "ElafAccessoriesAndroid/app/src/main/res/drawable/ic_launcher_foreground.xml"
 
       - name: Prepare Signing Key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           test -n "$KEYSTORE_BASE64"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/elaf-release-key.jks"
-          test -s "$RUNNER_TEMP/elaf-release-key.jks"
+          keytool -list -keystore "$RUNNER_TEMP/elaf-release-key.jks" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/elaf-release-key.jks" >> "$GITHUB_ENV"
 
-      - name: Build Signed Release APK
+      - name: Build Release APK
+        run: |
+          gradle --no-daemon -p ElafAccessoriesAndroid assembleRelease
+
+      - name: Locate Android Build Tools
+        run: |
+          BUILD_TOOLS=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)
+          test -x "$BUILD_TOOLS/apksigner"
+          test -x "$BUILD_TOOLS/zipalign"
+          echo "ANDROID_BUILD_TOOLS=$BUILD_TOOLS" >> "$GITHUB_ENV"
+
+      - name: Sign Release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          test -n "$ANDROID_KEYSTORE_PASSWORD"
-          test -n "$ANDROID_KEY_ALIAS"
-          test -n "$ANDROID_KEY_PASSWORD"
-          gradle --no-daemon -p ElafAccessoriesAndroid assembleRelease
-          test -s "ElafAccessoriesAndroid/app/build/outputs/apk/release/app-release.apk"
+          UNSIGNED_APK="ElafAccessoriesAndroid/app/build/outputs/apk/release/app-release-unsigned.apk"
+
+          if [ ! -f "$UNSIGNED_APK" ]; then
+            UNSIGNED_APK="ElafAccessoriesAndroid/app/build/outputs/apk/release/app-release.apk"
+          fi
+
+          test -s "$UNSIGNED_APK"
+          mkdir -p dist
+
+          "$ANDROID_BUILD_TOOLS/zipalign" -f -v 4 "$UNSIGNED_APK" "$RUNNER_TEMP/app-aligned.apk"
+
+          "$ANDROID_BUILD_TOOLS/apksigner" sign \
+            --ks "$ANDROID_KEYSTORE_PATH" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_KEY_PASSWORD \
+            --out dist/Elaf-Accessories-v1.0.0.apk \
+            "$RUNNER_TEMP/app-aligned.apk"
+
+          "$ANDROID_BUILD_TOOLS/apksigner" verify --verbose dist/Elaf-Accessories-v1.0.0.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Elaf-Accessories-Release-APK
-          path: ElafAccessoriesAndroid/app/build/outputs/apk/release/app-release.apk
+          path: dist/Elaf-Accessories-v1.0.0.apk
           if-no-files-found: error
 
       - name: Publish Public Download Release
@@ -69,10 +98,7 @@ jobs:
         with:
           tag_name: v1.0.0
           name: Elaf Accessories v1.0.0
-          body: |
-            Official Android release of Elaf Accessories.
-
-            Download and install the application.
-          files: ElafAccessoriesAndroid/app/build/outputs/apk/release/app-release.apk
+          body: Official signed Android release of Elaf Accessories.
+          files: dist/Elaf-Accessories-v1.0.0.apk
           overwrite_files: true
           make_latest: true
